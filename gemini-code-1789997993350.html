@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منظومة تحليلات الموارد البشرية والترتيب الشامل | HR Analytics</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SheetJS (xlsx) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.min.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts (Cairo) -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDKs (v9 Compat for easy browser integration) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #f8fafc; }
+        .tab-btn.active { background-color: #4f46e5; color: white; border-color: #4f46e5; }
+        .metric-card { transition: all 0.3s ease; }
+        .metric-card:hover { transform: translateY(-3px); }
+        
+        .pivot-dept-row { background-color: #f1f5f9; cursor: pointer; border-bottom: 1px solid #cbd5e1; }
+        .pivot-dept-row:hover { background-color: #e2e8f0; }
+        
+        .pivot-sec-row { background-color: #f8fafc; cursor: pointer; border-bottom: 1px solid #e2e8f0; }
+        .pivot-sec-row:hover { background-color: #f1f5f9; }
+
+        .pivot-emp-row { background-color: #ffffff; border-bottom: 1px solid #f1f5f9; }
+
+        /* Freeze Header CSS */
+        .table-scroll-container {
+            max-height: 65vh;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .freeze-header th {
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 20 !important;
+            background-color: #0f172a !important; /* bg-slate-900 */
+            color: #ffffff !important;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .sticky-filter-bar {
+            position: sticky;
+            top: 64px;
+            z-index: 30;
+            background-color: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(8px);
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            .sticky-filter-bar { position: relative !important; top: 0 !important; }
+            .freeze-header th { position: relative !important; top: 0 !important; }
+            .table-scroll-container { max-height: none !important; overflow: visible !important; }
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased">
+
+    <!-- Header Navigation -->
+    <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50 no-print">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3 space-x-reverse">
+                    <div class="p-2 bg-indigo-600 rounded-lg">
+                        <i class="fa-solid fa-chart-line text-xl text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-bold text-lg leading-tight">منظومة تحليلات الموارد البشرية والربط السحابي</h1>
+                        <p class="text-xs text-slate-400">HR Analytics & Firebase Cloud Sync</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-3 space-x-reverse">
+                    <button onclick="openFirebaseModal()" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-2 shadow-sm">
+                        <i class="fa-solid fa-fire"></i> إعدادات Firebase
+                    </button>
+                    <button onclick="clearAllData()" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-2 shadow-sm">
+                        <i class="fa-solid fa-trash-can"></i> مسح البيانات
+                    </button>
+                    <button onclick="window.print()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-2">
+                        <i class="fa-solid fa-print"></i> طباعة
+                    </button>
+                    <button onclick="exportToCSV()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition flex items-center gap-2">
+                        <i class="fa-solid fa-file-excel"></i> تصدير (CSV)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <!-- File Upload Section & Firebase Sync Bar -->
+        <section class="no-print bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+                <div class="space-y-1">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-cloud-arrow-up text-indigo-600"></i> مصدر البيانات (شيت الإكسيل أو Firebase)
+                    </h2>
+                    <p class="text-xs text-slate-500">اختر رفع شيت من جهازك أو جلب الموظفين مباشرة من قاعدة البيانات</p>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <button onclick="syncFromFirebase()" class="flex items-center px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold rounded-xl text-xs shadow-sm transition gap-2">
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                        <span>جلب من Firebase</span>
+                    </button>
+
+                    <label for="excelFileInput" class="cursor-pointer flex items-center px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md transition gap-2">
+                        <i class="fa-solid fa-file-excel text-base"></i>
+                        <span id="fileNameLabel">رفع شيت (الحاليين والاستقالات)</span>
+                        <input type="file" id="excelFileInput" accept=".xlsx, .xls" class="hidden" onchange="handleMainFileUpload(event)">
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <!-- GLOBAL STICKY FILTER BAR -->
+        <section class="sticky-filter-bar bg-white rounded-2xl p-4 shadow-md border border-indigo-100 space-y-3">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2 text-xs">
+                    <i class="fa-solid fa-filter text-indigo-600"></i> شريط الفلترة الشامل (تحديث إحصائي لحظي)
+                </h3>
+                <button onclick="resetFilters()" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1">
+                    <i class="fa-solid fa-rotate-right"></i> إعادة ضبط الفلاتر
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-indigo-700 mb-1">من تاريخ للفترة:</label>
+                    <input type="date" id="filterDateFrom" onchange="applyFilters()" class="w-full text-xs rounded-lg border-indigo-300 border-2 p-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-semibold">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-indigo-700 mb-1">إلى تاريخ للفترة:</label>
+                    <input type="date" id="filterDateTo" onchange="applyFilters()" class="w-full text-xs rounded-lg border-indigo-300 border-2 p-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-semibold">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">تصفية حسب القطاع:</label>
+                    <select id="filterSector" onchange="applyFilters()" class="w-full text-xs rounded-lg border-slate-200 border p-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
+                        <option value="ALL">جميع القطاعات</option>
+                        <option value="FACULTIES">الكليات فقط</option>
+                        <option value="ADMINISTRATIONS">الإدارات فقط</option>
+                        <option value="RESEARCH">الأبحاث فقط</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">نوع التعيين / الدوام:</label>
+                    <select id="filterWorkType" onchange="applyFilters()" class="w-full text-xs rounded-lg border-slate-200 border p-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
+                        <option value="ALL">الكل (دوام كلي وجزئي)</option>
+                        <option value="FULL">دوام كلي (معين / دائم)</option>
+                        <option value="PART">دوام جزئي (Part Time)</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- Navigation Tabs -->
+        <div class="flex flex-wrap border-b border-slate-200 gap-2 no-print">
+            <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-btn active px-5 py-2.5 rounded-t-xl font-bold text-xs border-t border-x border-slate-200 transition flex items-center gap-2">
+                <i class="fa-solid fa-chart-pie"></i> الداشبورد الرئيسي
+            </button>
+            <button onclick="switchTab('pivot')" id="tab-pivot" class="tab-btn bg-slate-100 text-slate-600 px-5 py-2.5 rounded-t-xl font-bold text-xs border-t border-x border-slate-200 transition flex items-center gap-2">
+                <i class="fa-solid fa-sitemap"></i> تقرير Pivot الشجري (3 مستويات)
+            </button>
+            <button onclick="switchTab('rankings')" id="tab-rankings" class="tab-btn bg-slate-100 text-slate-600 px-5 py-2.5 rounded-t-xl font-bold text-xs border-t border-x border-slate-200 transition flex items-center gap-2">
+                <i class="fa-solid fa-ranking-star"></i> الترتيب الشامل للإدارات
+            </button>
+        </div>
+
+        <!-- ================= TAB 1: MAIN DASHBOARD ================= -->
+        <div id="content-dashboard" class="space-y-6">
+            
+            <!-- ROW 1: MAIN KPIS WITH START/END HEADCOUNT NEXT TO TURNOVER -->
+            <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                
+                <div class="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="metric-card bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
+                        <div>
+                            <p class="text-[11px] font-bold text-slate-400 uppercase">إجمالي الحاليين</p>
+                            <h3 id="kpiActive" class="text-3xl font-black text-slate-800 mt-1">0</h3>
+                        </div>
+                        <p class="text-[10px] text-indigo-600 font-bold mt-2"><i class="fa-solid fa-users"></i> العمالة المستمرة</p>
+                    </div>
+
+                    <div class="metric-card bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
+                        <div>
+                            <p class="text-[11px] font-bold text-slate-400 uppercase">التعيينات الجديدة بالفترة</p>
+                            <h3 id="kpiHiredPeriod" class="text-3xl font-black text-emerald-600 mt-1">0</h3>
+                        </div>
+                        <p class="text-[10px] text-emerald-600 font-bold mt-2"><i class="fa-solid fa-user-plus"></i> انضموا بالفترة</p>
+                    </div>
+
+                    <div class="metric-card bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
+                        <div>
+                            <p class="text-[11px] font-bold text-slate-400 uppercase">استقالات الفترة</p>
+                            <h3 id="kpiResignedPeriod" class="text-3xl font-black text-rose-600 mt-1">0</h3>
+                        </div>
+                        <p class="text-[10px] text-rose-500 font-bold mt-2"><i class="fa-solid fa-user-minus"></i> تركوا العمل</p>
+                    </div>
+                </div>
+
+                <!-- Combined Turnover & Small Start/End Boxes -->
+                <div class="lg:col-span-5 bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-4 rounded-2xl shadow-md flex items-center justify-between">
+                    <div class="space-y-1">
+                        <span class="text-[10px] bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded-md">معدل دوران العمل</span>
+                        <h3 id="kpiTurnover" class="text-3xl font-black text-amber-400">0%</h3>
+                        <p class="text-[10px] text-slate-300">(الاستقالات ÷ المتوسط) × 100</p>
+                    </div>
+
+                    <div class="flex gap-2">
+                        <div class="bg-white/10 backdrop-blur-md p-2.5 rounded-xl border border-white/10 text-center min-w-[90px]">
+                            <p class="text-[10px] text-slate-300 font-semibold">أول الفترة</p>
+                            <h4 id="kpiStartHeadcount" class="text-lg font-black text-emerald-400 mt-0.5">0</h4>
+                            <p class="text-[9px] text-slate-400">حتى (من)</p>
+                        </div>
+
+                        <div class="bg-white/10 backdrop-blur-md p-2.5 rounded-xl border border-white/10 text-center min-w-[90px]">
+                            <p class="text-[10px] text-slate-300 font-semibold">نهاية الفترة</p>
+                            <h4 id="kpiEndHeadcount" class="text-lg font-black text-sky-400 mt-0.5">0</h4>
+                            <p class="text-[9px] text-slate-400">حتى (إلى)</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ROW 2: DEMOGRAPHICS -->
+            <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-slate-400">عدد الذكور (Males)</p>
+                        <h3 id="kpiMaleCount" class="text-2xl font-black text-sky-600 mt-1">0</h3>
+                        <p id="kpiMaleRatio" class="text-[10px] text-sky-600 font-bold mt-1">0% من القوة</p>
+                    </div>
+                    <div class="w-10 h-10 bg-sky-50 rounded-xl flex items-center justify-center text-sky-600 text-lg">
+                        <i class="fa-solid fa-mars"></i>
+                    </div>
+                </div>
+
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-slate-400">عدد الإناث (Females)</p>
+                        <h3 id="kpiFemaleCount" class="text-2xl font-black text-pink-600 mt-1">0</h3>
+                        <p id="kpiFemaleRatio" class="text-[10px] text-pink-600 font-bold mt-1">0% من القوة</p>
+                    </div>
+                    <div class="w-10 h-10 bg-pink-50 rounded-xl flex items-center justify-center text-pink-600 text-lg">
+                        <i class="fa-solid fa-venus"></i>
+                    </div>
+                </div>
+
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-slate-400">متوسط العمر العام</p>
+                        <h3 id="statAvgAge" class="text-2xl font-black text-indigo-600 mt-1">0 سنة</h3>
+                        <p class="text-[10px] text-indigo-500 font-bold mt-1">القوة الحالية</p>
+                    </div>
+                    <div class="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 text-lg">
+                        <i class="fa-solid fa-cake-candles"></i>
+                    </div>
+                </div>
+
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-slate-400">نسبة Part-Time</p>
+                        <h3 id="statPartTimeRatio" class="text-2xl font-black text-amber-600 mt-1">0%</h3>
+                        <p class="text-[10px] text-amber-600 font-bold mt-1">دوام جزئي</p>
+                    </div>
+                    <div class="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 text-lg">
+                        <i class="fa-solid fa-clock"></i>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ROW 3: CHARTS -->
+            <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="font-bold text-slate-800 mb-4 text-xs flex items-center gap-2">
+                        <i class="fa-solid fa-chart-bar text-indigo-600"></i> مقارنة التعيينات والإنهاءات بالفترة
+                    </h3>
+                    <div class="relative h-64"><canvas id="chartDeptComparison"></canvas></div>
+                </div>
+
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="font-bold text-slate-800 mb-4 text-xs flex items-center gap-2">
+                        <i class="fa-solid fa-chart-pie text-amber-500"></i> توزيع نوع الدوام والتعيين
+                    </h3>
+                    <div class="relative h-64"><canvas id="chartWorkType"></canvas></div>
+                </div>
+            </section>
+        </div>
+
+        <!-- ================= TAB 2: PIVOT TREE TABLE (3 LEVELS STRICT) ================= -->
+        <div id="content-pivot" class="hidden space-y-6">
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                            <i class="fa-solid fa-sitemap text-indigo-600"></i> تقرير Pivot شجري (إدارة ➔ قسم ➔ اسم الموظف)
+                        </h3>
+                        <p class="text-xs text-slate-500 mt-0.5">افتح الإدارة لرؤية أقسامها، وافتح القسم لرؤية أسماء موظفيه</p>
+                    </div>
+                    <!-- OPEN ALL / CLOSE ALL BUTTONS -->
+                    <div class="flex items-center gap-2">
+                        <button onclick="expandAllPivotRows()" class="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200 transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-folder-open"></i> فتح الكل
+                        </button>
+                        <button onclick="collapseAllPivotRows()" class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-folder-closed"></i> إغلاق الكل
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-scroll-container">
+                    <table class="w-full text-right text-xs border-collapse">
+                        <thead class="freeze-header">
+                            <tr>
+                                <th class="p-3.5">الإدارة / القسم / اسم الموظف</th>
+                                <th class="p-3.5 text-center">عدد الحاليين</th>
+                                <th class="p-3.5 text-center text-emerald-400">التعيينات الجديدة</th>
+                                <th class="p-3.5 text-center text-rose-400">الإستقالات</th>
+                                <th class="p-3.5 text-center text-amber-300">معدل الدوران %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pivotTableBody" class="divide-y divide-slate-200 text-slate-800">
+                            <tr>
+                                <td colspan="5" class="p-8 text-center text-slate-400">يرجى رفع شيت البيانات لعرض الشجرة التفاعلية</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- ================= TAB 3: RANKINGS ================= -->
+        <div id="content-rankings" class="hidden space-y-6">
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                            <i class="fa-solid fa-ranking-star text-amber-500"></i> الترتيب الشامل لجميع الإدارات
+                        </h3>
+                    </div>
+                    <div class="w-full md:w-64">
+                        <select id="rankingMetricSelect" onchange="renderRankingsReport()" class="w-full text-xs rounded-lg border-indigo-200 border-2 p-2.5 font-bold text-indigo-800 bg-white">
+                            <option value="active">حسب عدد الموظفين الحاليين</option>
+                            <option value="hired">حسب التعيينات الجديدة</option>
+                            <option value="resigned">حسب الاستقالات المنفذة بالفترة</option>
+                            <option value="turnover">حسب معدل دوران العمل (Turnover %)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-scroll-container">
+                    <table class="w-full text-right text-xs border-collapse">
+                        <thead class="freeze-header">
+                            <tr>
+                                <th class="p-3.5 text-center">الترتيب</th>
+                                <th class="p-3.5">اسم الكلية / الإدارة</th>
+                                <th class="p-3.5 text-center">عدد الحاليين</th>
+                                <th class="p-3.5 text-center text-emerald-400">التعيينات الجديدة</th>
+                                <th class="p-3.5 text-center text-rose-400">الاستقالات</th>
+                                <th class="p-3.5 text-center text-amber-300">معدل الدوران %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rankingsTableBody" class="divide-y divide-slate-100 text-slate-700">
+                            <tr><td colspan="6" class="p-8 text-center text-slate-400">يرجى رفع البيانات لعرض الترتيب الشامل</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+    </main>
+
+    <!-- FIREBASE CONFIG MODAL -->
+    <div id="firebaseModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl space-y-4">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-fire text-amber-500"></i> إعدادات قاعدة بيانات Firebase
+                </h3>
+                <button onclick="closeFirebaseModal()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <p class="text-xs text-slate-500">لربط الأداة مباشرة مع Firebase، أدخل كائن `firebaseConfig` الخاص بك هنا:</p>
+
+            <textarea id="firebaseConfigInput" rows="6" dir="ltr" placeholder='{
+  "apiKey": "YOUR_API_KEY",
+  "authDomain": "PROJECT.firebaseapp.com",
+  "projectId": "PROJECT_ID",
+  "storageBucket": "PROJECT.appspot.com",
+  "messagingSenderId": "SENDER_ID",
+  "appId": "APP_ID"
+}' class="w-full p-3 font-mono text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-slate-50"></textarea>
+
+            <div class="flex items-center justify-end gap-2 pt-2">
+                <button onclick="closeFirebaseModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl">إلغاء</button>
+                <button onclick="saveFirebaseSettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl">حفظ الرابط</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let rawActiveData = [];
+        let rawResignedData = [];
+
+        let currentFilteredActive = [];
+        let currentFilteredResigned = [];
+        let currentStartHeadcountList = [];
+        let currentEndHeadcountList = [];
+        let currentPeriodHiredList = [];
+
+        let deptChartInstance = null;
+        let workTypeChartInstance = null;
+        let db = null;
+
+        function switchTab(tabName) {
+            ['dashboard', 'pivot', 'rankings'].forEach(t => {
+                document.getElementById(`content-${t}`).classList.add('hidden');
+                document.getElementById(`tab-${t}`).classList.remove('active');
+                document.getElementById(`tab-${t}`).classList.add('bg-slate-100', 'text-slate-600');
+            });
+
+            document.getElementById(`content-${tabName}`).classList.remove('hidden');
+            const activeBtn = document.getElementById(`tab-${tabName}`);
+            activeBtn.classList.add('active');
+            activeBtn.classList.remove('bg-slate-100', 'text-slate-600');
+        }
+
+        function clearAllData() {
+            if (confirm("هل أنت تأكد من رغبتك في مسح جميع البيانات المرفوعة وإعادة ضبط الأداة؟")) {
+                rawActiveData = [];
+                rawResignedData = [];
+
+                document.getElementById('fileNameLabel').innerText = "رفع شيت (الحاليين والاستقالات)";
+                document.getElementById('excelFileInput').value = "";
+
+                document.getElementById('pivotTableBody').innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">تم مسح البيانات بنجاح</td></tr>';
+                document.getElementById('rankingsTableBody').innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">تم مسح البيانات بنجاح</td></tr>';
+
+                resetFilters();
+            }
+        }
+
+        function handleMainFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('fileNameLabel').innerText = file.name;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+
+                let activeSheetName = workbook.SheetNames.find(s => s.includes('حالي') || s.includes('الحاليين')) || workbook.SheetNames[0];
+                let resignedSheetName = workbook.SheetNames.find(s => s.includes('استقال') || s.includes('الإستقالات')) || workbook.SheetNames[1];
+
+                if (activeSheetName && workbook.Sheets[activeSheetName]) {
+                    rawActiveData = XLSX.utils.sheet_to_json(workbook.Sheets[activeSheetName]);
+                }
+                if (resignedSheetName && workbook.Sheets[resignedSheetName]) {
+                    rawResignedData = XLSX.utils.sheet_to_json(workbook.Sheets[resignedSheetName]);
+                }
+
+                applyFilters();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function parseDate(dateVal) {
+            if (!dateVal) return null;
+            if (dateVal instanceof Date) return dateVal;
+            const d = new Date(dateVal);
+            return isNaN(d.getTime()) ? null : d;
+        }
+
+        function isFaculty(deptName) {
+            const name = String(deptName || '').toLowerCase();
+            return name.includes('كلية') || name.includes('faculty');
+        }
+
+        function isResearch(deptName) {
+            const name = String(deptName || '').toLowerCase();
+            return name.includes('أبحاث') || name.includes('بحوث') || name.includes('مشروعات') || name.includes('research');
+        }
+
+        function applyFilters() {
+            const dateFrom = document.getElementById('filterDateFrom').value ? new Date(document.getElementById('filterDateFrom').value) : null;
+            const dateTo = document.getElementById('filterDateTo').value ? new Date(document.getElementById('filterDateTo').value) : null;
+            const selectedSector = document.getElementById('filterSector').value;
+            const selectedWorkType = document.getElementById('filterWorkType').value;
+
+            currentFilteredActive = rawActiveData.filter(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || '').trim();
+                const type = String(item['نوع التعيين'] || '').trim();
+
+                if (selectedSector === 'FACULTIES' && !isFaculty(dept)) return false;
+                if (selectedSector === 'RESEARCH' && !isResearch(dept)) return false;
+                if (selectedSector === 'ADMINISTRATIONS' && (isFaculty(dept) || isResearch(dept))) return false;
+
+                if (selectedWorkType === 'FULL' && type.includes('جزئ')) return false;
+                if (selectedWorkType === 'PART' && !type.includes('جزئ')) return false;
+
+                return true;
+            });
+
+            currentFilteredResigned = rawResignedData.filter(item => {
+                const dept = String(item['الإدارة'] || item['الإدارة / كلية'] || '').trim();
+                const type = String(item['نوع التعيين'] || '').trim();
+
+                if (selectedSector === 'FACULTIES' && !isFaculty(dept)) return false;
+                if (selectedSector === 'RESEARCH' && !isResearch(dept)) return false;
+                if (selectedSector === 'ADMINISTRATIONS' && (isFaculty(dept) || isResearch(dept))) return false;
+
+                if (selectedWorkType === 'FULL' && type.includes('جزئ')) return false;
+                if (selectedWorkType === 'PART' && !type.includes('جزئ')) return false;
+
+                return true;
+            });
+
+            currentStartHeadcountList = currentFilteredActive.filter(item => {
+                const hireDate = parseDate(item['تاريخ العمل الفعلي'] || item['تاريخ التعيين']);
+                if (!hireDate) return true;
+                if (dateFrom && hireDate > dateFrom) return false;
+                return true;
+            });
+
+            currentEndHeadcountList = currentFilteredActive.filter(item => {
+                const hireDate = parseDate(item['تاريخ العمل الفعلي'] || item['تاريخ التعيين']);
+                if (!hireDate) return true;
+                if (dateTo && hireDate > dateTo) return false;
+                return true;
+            });
+
+            currentPeriodHiredList = currentFilteredActive.filter(item => {
+                const hireDate = parseDate(item['تاريخ العمل الفعلي'] || item['تاريخ التعيين']);
+                if (!hireDate) return true;
+                if (dateFrom && hireDate < dateFrom) return false;
+                if (dateTo && hireDate > dateTo) return false;
+                return true;
+            });
+
+            const periodResigned = currentFilteredResigned.filter(item => {
+                const resDate = parseDate(item['تاريخ إنقضاء العمل'] || item['تاريخ الاستقالة'] || item['تاريخ العمل الفعلي']);
+                if (!resDate) return true;
+                if (dateFrom && resDate < dateFrom) return false;
+                if (dateTo && resDate > dateTo) return false;
+                return true;
+            });
+
+            calculateMetricsAndRender(currentFilteredActive, periodResigned);
+        }
+
+        function calculateMetricsAndRender(activeList, periodResignedList) {
+            const nStart = currentStartHeadcountList.length;
+            const nEnd = currentEndHeadcountList.length;
+            const nActive = activeList.length;
+            const nHiredPeriod = currentPeriodHiredList.length;
+            const nResignedPeriod = periodResignedList.length;
+
+            const avgHeadcount = (nStart + nEnd) / 2 || nActive || 1;
+            const turnoverRate = avgHeadcount > 0 ? ((nResignedPeriod / avgHeadcount) * 100).toFixed(1) : 0;
+
+            document.getElementById('kpiActive').innerText = nActive.toLocaleString('ar-EG');
+            document.getElementById('kpiHiredPeriod').innerText = nHiredPeriod.toLocaleString('ar-EG');
+            document.getElementById('kpiResignedPeriod').innerText = nResignedPeriod.toLocaleString('ar-EG');
+
+            document.getElementById('kpiStartHeadcount').innerText = nStart.toLocaleString('ar-EG');
+            document.getElementById('kpiEndHeadcount').innerText = nEnd.toLocaleString('ar-EG');
+            document.getElementById('kpiTurnover').innerText = `${turnoverRate}%`;
+
+            let maleCount = 0;
+            let femaleCount = 0;
+            let partTimeCount = 0;
+            let ageSum = 0;
+            let ageCount = 0;
+
+            activeList.forEach(item => {
+                const gender = String(item['النوع'] || item['الجنس'] || '').trim().toLowerCase();
+                if (gender.includes('ذكر') || gender === 'm' || gender === 'male') maleCount++;
+                else if (gender.includes('أنثى') || gender.includes('انثى') || gender === 'f' || gender === 'female') femaleCount++;
+
+                const type = String(item['نوع التعيين'] || '');
+                if (type.includes('جزئ')) partTimeCount++;
+
+                const age = parseFloat(item['السن']);
+                if (!isNaN(age) && age > 0) { ageSum += age; ageCount++; }
+            });
+
+            const totalGender = maleCount + femaleCount || activeList.length || 1;
+            const maleRatio = ((maleCount / totalGender) * 100).toFixed(1);
+            const femaleRatio = ((femaleCount / totalGender) * 100).toFixed(1);
+
+            document.getElementById('kpiMaleCount').innerText = maleCount.toLocaleString('ar-EG');
+            document.getElementById('kpiMaleRatio').innerText = `${maleRatio}% من القوة`;
+
+            document.getElementById('kpiFemaleCount').innerText = femaleCount.toLocaleString('ar-EG');
+            document.getElementById('kpiFemaleRatio').innerText = `${femaleRatio}% من القوة`;
+
+            const avgAge = ageCount > 0 ? (ageSum / ageCount).toFixed(1) : 0;
+            const partTimeRatio = activeList.length > 0 ? ((partTimeCount / activeList.length) * 100).toFixed(1) : 0;
+
+            document.getElementById('statAvgAge').innerText = `${avgAge} سنة`;
+            document.getElementById('statPartTimeRatio').innerText = `${partTimeRatio}%`;
+
+            renderTreePivotTable(activeList, periodResignedList);
+            renderRankingsReport(activeList, periodResignedList);
+            renderCharts(activeList, periodResignedList, partTimeCount, (activeList.length - partTimeCount));
+        }
+
+        // Render 3-Level Tree Pivot Table (Dept [+] -> Sec [+] -> Employee Names)
+        function renderTreePivotTable(activeList, periodResignedList) {
+            const deptPivot = {};
+
+            activeList.forEach(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || 'غير محدد').trim();
+                const sec = String(item['القسم'] || item['القسم التابع له'] || 'عام').trim();
+                const empName = String(item['الأسم العربي'] || item['الاسم العربى'] || 'موظف').trim();
+                const jobTitle = String(item['الوظيفة'] || '').trim();
+
+                if (!deptPivot[dept]) deptPivot[dept] = { active: 0, hired: 0, resigned: 0, sections: {} };
+                deptPivot[dept].active++;
+
+                if (!deptPivot[dept].sections[sec]) deptPivot[dept].sections[sec] = { active: 0, hired: 0, resigned: 0, employees: [] };
+                deptPivot[dept].sections[sec].active++;
+                deptPivot[dept].sections[sec].employees.push({ name: empName, job: jobTitle, status: 'حالي' });
+            });
+
+            currentPeriodHiredList.forEach(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || 'غير محدد').trim();
+                const sec = String(item['القسم'] || item['القسم التابع له'] || 'عام').trim();
+
+                if (!deptPivot[dept]) deptPivot[dept] = { active: 0, hired: 0, resigned: 0, sections: {} };
+                deptPivot[dept].hired++;
+
+                if (!deptPivot[dept].sections[sec]) deptPivot[dept].sections[sec] = { active: 0, hired: 0, resigned: 0, employees: [] };
+                deptPivot[dept].sections[sec].hired++;
+            });
+
+            periodResignedList.forEach(item => {
+                const dept = String(item['الإدارة'] || item['الإدارة / كلية'] || 'غير محدد').trim();
+                const sec = String(item['القسم التابع له'] || item['القسم'] || 'عام').trim();
+                const empName = String(item['الاسم العربى'] || item['الأسم العربي'] || 'مستقيل').trim();
+                const jobTitle = String(item['الوظيفة'] || '').trim();
+
+                if (!deptPivot[dept]) deptPivot[dept] = { active: 0, hired: 0, resigned: 0, sections: {} };
+                deptPivot[dept].resigned++;
+
+                if (!deptPivot[dept].sections[sec]) deptPivot[dept].sections[sec] = { active: 0, hired: 0, resigned: 0, employees: [] };
+                deptPivot[dept].sections[sec].resigned++;
+                deptPivot[dept].sections[sec].employees.push({ name: empName, job: jobTitle, status: 'مستقيل' });
+            });
+
+            let htmlBuffer = '';
+            let deptIdx = 0;
+            let secGlobalIdx = 0;
+
+            Object.keys(deptPivot).forEach(dept => {
+                deptIdx++;
+                const d = deptPivot[dept];
+                const avg = d.active + (d.resigned / 2);
+                const rate = avg > 0 ? ((d.resigned / avg) * 100).toFixed(1) : 0;
+
+                // LEVEL 1: DEPARTMENT ROW
+                htmlBuffer += `
+                    <tr class="pivot-dept-row font-bold border-b border-slate-300" onclick="togglePivotRow('dept', ${deptIdx})">
+                        <td class="p-3.5 flex items-center gap-2">
+                            <span id="pivot-dept-icon-${deptIdx}" class="text-indigo-600 font-extrabold text-sm">[+]</span>
+                            <span>${dept}</span>
+                        </td>
+                        <td class="p-3.5 text-center text-slate-800 font-black">${d.active.toLocaleString('ar-EG')}</td>
+                        <td class="p-3.5 text-center text-emerald-600 font-bold">${d.hired.toLocaleString('ar-EG')}</td>
+                        <td class="p-3.5 text-center text-rose-600 font-bold">${d.resigned.toLocaleString('ar-EG')}</td>
+                        <td class="p-3.5 text-center text-amber-700 font-bold">${rate}%</td>
+                    </tr>
+                `;
+
+                // LEVEL 2: SECTION ROWS
+                Object.keys(d.sections).forEach(sec => {
+                    secGlobalIdx++;
+                    const secId = secGlobalIdx;
+                    const s = d.sections[sec];
+                    const sAvg = s.active + (s.resigned / 2);
+                    const sRate = sAvg > 0 ? ((s.resigned / sAvg) * 100).toFixed(1) : 0;
+
+                    htmlBuffer += `
+                        <tr class="pivot-dept-child-${deptIdx} hidden pivot-sec-row font-semibold border-b border-slate-200" onclick="togglePivotRow('sec', ${secId})">
+                            <td class="p-3 pr-8 flex items-center gap-2">
+                                <span id="pivot-sec-icon-${secId}" class="text-emerald-600 font-bold text-xs">[+]</span>
+                                <span><i class="fa-solid fa-turn-down-left ml-1 text-slate-400"></i> ${sec}</span>
+                            </td>
+                            <td class="p-3 text-center text-slate-700">${s.active}</td>
+                            <td class="p-3 text-center text-emerald-600">${s.hired}</td>
+                            <td class="p-3 text-center text-rose-600">${s.resigned}</td>
+                            <td class="p-3 text-center text-amber-700">${sRate}%</td>
+                        </tr>
+                    `;
+
+                    // LEVEL 3: INDIVIDUAL EMPLOYEES ROWS
+                    s.employees.forEach(emp => {
+                        const statusBadge = emp.status === 'حالي' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800';
+                        htmlBuffer += `
+                            <tr class="pivot-sec-child-${secId} pivot-dept-child-${deptIdx} hidden pivot-emp-row text-slate-600">
+                                <td class="p-2.5 pr-14" colspan="2">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-solid fa-user text-slate-400 text-[10px]"></i>
+                                        <span class="font-bold text-slate-800">${emp.name}</span>
+                                        <span class="text-xs text-slate-400">(${emp.job})</span>
+                                    </div>
+                                </td>
+                                <td class="p-2.5 text-center font-bold" colspan="3">
+                                    <span class="px-2 py-0.5 rounded text-[10px] ${statusBadge}">${emp.status}</span>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                });
+            });
+
+            document.getElementById('pivotTableBody').innerHTML = htmlBuffer;
+        }
+
+        // Toggle specific branch in Tree Pivot Table
+        function togglePivotRow(type, idx) {
+            const rows = document.querySelectorAll(`.pivot-${type}-child-${idx}`);
+            const icon = document.getElementById(`pivot-${type}-icon-${idx}`);
+            let isOpening = false;
+
+            rows.forEach(r => {
+                if (r.classList.contains('hidden')) {
+                    r.classList.remove('hidden');
+                    isOpening = true;
+                } else {
+                    r.classList.add('hidden');
+                }
+            });
+
+            if (icon) icon.innerText = isOpening ? "[-]" : "[+]";
+        }
+
+        // Expand All Tree Rows (فتح الكل)
+        function expandAllPivotRows() {
+            document.querySelectorAll('[class*="pivot-dept-child-"], [class*="pivot-sec-child-"]').forEach(r => r.classList.remove('hidden'));
+            document.querySelectorAll('[id*="pivot-dept-icon-"], [id*="pivot-sec-icon-"]').forEach(i => i.innerText = "[-]");
+        }
+
+        // Collapse All Tree Rows (إغلاق الكل)
+        function collapseAllPivotRows() {
+            document.querySelectorAll('[class*="pivot-dept-child-"], [class*="pivot-sec-child-"]').forEach(r => r.classList.add('hidden'));
+            document.querySelectorAll('[id*="pivot-dept-icon-"], [id*="pivot-sec-icon-"]').forEach(i => i.innerText = "[+]");
+        }
+
+        function renderRankingsReport(activeList, periodResignedList) {
+            const stats = {};
+            
+            activeList.forEach(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || 'غير محدد').trim();
+                if (!stats[dept]) stats[dept] = { active: 0, hired: 0, resigned: 0 };
+                stats[dept].active++;
+            });
+
+            currentPeriodHiredList.forEach(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || 'غير محدد').trim();
+                if (!stats[dept]) stats[dept] = { active: 0, hired: 0, resigned: 0 };
+                stats[dept].hired++;
+            });
+
+            periodResignedList.forEach(item => {
+                const dept = String(item['الإدارة'] || item['الإدارة / كلية'] || 'غير محدد').trim();
+                if (!stats[dept]) stats[dept] = { active: 0, hired: 0, resigned: 0 };
+                stats[dept].resigned++;
+            });
+
+            const metric = document.getElementById('rankingMetricSelect') ? document.getElementById('rankingMetricSelect').value : 'active';
+
+            const list = Object.keys(stats).map(dept => {
+                const d = stats[dept];
+                const avg = d.active + (d.resigned / 2);
+                const turnover = avg > 0 ? parseFloat(((d.resigned / avg) * 100).toFixed(1)) : 0;
+                return { dept, ...d, turnover };
+            });
+
+            list.sort((a, b) => b[metric] - a[metric]);
+
+            let htmlBuffer = '';
+            list.forEach((row, index) => {
+                htmlBuffer += `
+                    <tr class="hover:bg-slate-50 border-b border-slate-100">
+                        <td class="p-3.5 text-center font-bold">#${index + 1}</td>
+                        <td class="p-3.5 font-bold text-slate-800">${row.dept}</td>
+                        <td class="p-3.5 text-center font-extrabold text-slate-800">${row.active}</td>
+                        <td class="p-3.5 text-center text-emerald-600 font-bold">${row.hired}</td>
+                        <td class="p-3.5 text-center text-rose-600 font-bold">${row.resigned}</td>
+                        <td class="p-3.5 text-center text-amber-700 font-bold">${row.turnover}%</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('rankingsTableBody').innerHTML = htmlBuffer;
+        }
+
+        function renderCharts(activeList, resignedList, partTimeCount, fullTimeCount) {
+            const stats = {};
+            activeList.forEach(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || 'غير محدد').trim();
+                if (!stats[dept]) stats[dept] = { hired: 0, resigned: 0 };
+            });
+
+            currentPeriodHiredList.forEach(item => {
+                const dept = String(item['الإدارة / كلية'] || item['الإدارة'] || 'غير محدد').trim();
+                if (!stats[dept]) stats[dept] = { hired: 0, resigned: 0 };
+                stats[dept].hired++;
+            });
+
+            resignedList.forEach(item => {
+                const dept = String(item['الإدارة'] || item['الإدارة / كلية'] || 'غير محدد').trim();
+                if (!stats[dept]) stats[dept] = { hired: 0, resigned: 0 };
+                stats[dept].resigned++;
+            });
+
+            const labels = Object.keys(stats).slice(0, 10);
+            const hiredData = labels.map(l => stats[l].hired);
+            const resignedData = labels.map(l => stats[l].resigned);
+
+            const ctx1 = document.getElementById('chartDeptComparison').getContext('2d');
+            if (deptChartInstance) deptChartInstance.destroy();
+            deptChartInstance = new Chart(ctx1, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'تعيينات جديدة', data: hiredData, backgroundColor: '#10b981' },
+                        { label: 'استقالات للفترة', data: resignedData, backgroundColor: '#f43f5e' }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+
+            const ctx2 = document.getElementById('chartWorkType').getContext('2d');
+            if (workTypeChartInstance) workTypeChartInstance.destroy();
+            workTypeChartInstance = new Chart(ctx2, {
+                type: 'doughnut',
+                data: {
+                    labels: ['دوام كلي (Full-Time)', 'دوام جزئي (Part-Time)'],
+                    datasets: [{
+                        data: [fullTimeCount, partTimeCount],
+                        backgroundColor: ['#4f46e5', '#f59e0b']
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        }
+
+        function resetFilters() {
+            document.getElementById('filterDateFrom').value = '';
+            document.getElementById('filterDateTo').value = '';
+            document.getElementById('filterSector').value = 'ALL';
+            document.getElementById('filterWorkType').value = 'ALL';
+            applyFilters();
+        }
+
+        // ================= FIREBASE INTEGRATION LOGIC =================
+        function openFirebaseModal() {
+            document.getElementById('firebaseModal').classList.remove('hidden');
+        }
+
+        function closeFirebaseModal() {
+            document.getElementById('firebaseModal').classList.add('hidden');
+        }
+
+        function saveFirebaseSettings() {
+            const configText = document.getElementById('firebaseConfigInput').value;
+            try {
+                const config = JSON.parse(configText);
+                localStorage.setItem('hr_firebase_config', JSON.stringify(config));
+                alert("تم حفظ إعدادات Firebase بنجاح!");
+                closeFirebaseModal();
+                initFirebase();
+            } catch (e) {
+                alert("خطأ في تنسيق الكائن، يرجي التأكد من إدخال JSON صحيح.");
+            }
+        }
+
+        function initFirebase() {
+            const savedConfig = localStorage.getItem('hr_firebase_config');
+            if (!savedConfig) return;
+            try {
+                const config = JSON.parse(savedConfig);
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(config);
+                }
+                db = firebase.firestore();
+            } catch (e) {
+                console.error("Firebase init failed:", e);
+            }
+        }
+
+        async function syncFromFirebase() {
+            if (!db) {
+                initFirebase();
+                if (!db) {
+                    alert("يرجى إدخال إعدادات Firebase أولاً من خلال زر 'إعدادات Firebase'.");
+                    openFirebaseModal();
+                    return;
+                }
+            }
+
+            try {
+                alert("جاري جلب البيانات من السحابة...");
+                const activeSnap = await db.collection('active_employees').get();
+                const resignedSnap = await db.collection('resigned_employees').get();
+
+                rawActiveData = activeSnap.docs.map(doc => doc.data());
+                rawResignedData = resignedSnap.docs.map(doc => doc.data());
+
+                document.getElementById('fileNameLabel').innerText = "تم الجلب من Firebase";
+                applyFilters();
+                alert(`تم جلب ${rawActiveData.length} موظف حالي و ${rawResignedData.length} مستقيل بنجاح!`);
+            } catch (e) {
+                alert("حدث خطأ أثناء جلب البيانات من Firebase: " + e.message);
+            }
+        }
+
+        function exportToCSV() {
+            let csv = '\uFEFFالإدارة/الكلية,عدد الحاليين,التعيينات الجديدة,الإستقالات,معدل الدوران %\n';
+            const rows = document.querySelectorAll('#pivotTableBody tr.pivot-dept-row');
+            rows.forEach(row => {
+                const cols = row.querySelectorAll('td');
+                if (cols.length >= 5) {
+                    const line = Array.from(cols).map(c => `"${c.innerText.trim().replace('[+]', '').replace('[-]', '')}"`).join(',');
+                    csv += line + '\n';
+                }
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.setAttribute('download', 'تقرير_الموارد_البشرية.csv');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Initialize Firebase on load if config exists
+        window.onload = function() {
+            initFirebase();
+        };
+    </script>
+</body>
+</html>
